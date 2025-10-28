@@ -101,8 +101,12 @@ def extract_customer_from_idea(idea: Dict[str, Any]) -> str:
             return org
     return ""
 
-@app.route("/aha/webhook", methods=["POST"])
+@app.route("/aha/webhook", methods=["POST", "HEAD", "GET"])
 def aha_webhook():
+    # Allow Aha! to verify the webhook and run quick health checks
+    if request.method in ("HEAD", "GET"):
+        return ("", 200)
+
     data = request.get_json(force=True, silent=True) or {}
     idea = data.get("idea") or data
     idea_id = str(idea.get("id") or idea.get("reference_num") or idea.get("reference"))
