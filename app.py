@@ -184,13 +184,12 @@ def aha_webhook():
     draft_body = f"[DRAFT – Tal review required]\\n\\n{critique}"
     try:
         aha_post_private_comment(idea_id, draft_body)
+        blocks = build_slack_blocks(idea, critique)
         slack_notify(
-            text=f"Draft private note created for idea {idea.get('name')}",
-            blocks=[
-                {"type": "section", "text": {"type": "mrkdwn", "text": f"*Idea:* {idea.get('name')}"}},
-                {"type": "section", "text": {"type": "mrkdwn", "text": f"```{critique}```"}},
-            ],
+            text=f"Draft note for {idea.get('name') or 'idea'}",
+            blocks=blocks,
         )
+
     except Exception as e:
         slack_notify(text=f"Failed to add draft private note for idea {idea_id}: {e}")
     return jsonify({"status": "ok", "idea_id": idea_id})
