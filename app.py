@@ -5,6 +5,74 @@ import re
 from flask import Flask, request, jsonify
 import requests
 
+import re
+import os
+
+# Strip basic HTML tags Aha! may include in rich text fields
+def _strip_html(s: str) -> str:
+    if not s:
+        return ""
+    return re.sub(r"<[^>]+>", "", s)
+
+def _shorten(s: str, limit: int = 2950) -> str:
+    """Slack block text hard limit is 3000 chars; leave room for label."""
+    s = s or ""
+    return s if len(s) <= limit else s[:limit] + "…"
+
+def build_slack_blocks(idea: dict, critique: str) -> list:
+    # Core identity
+    idea_id   = idea.get("reference_num") or idea.get("reference") or idea.get("id") or "unknown"
+    idea_name = idea.get("name") or "Unnamed idea"
+    base_url  = os.environ.get("AHA_BASE_URL", "").rstrip("/")
+    idea_url  = idea.get("url") or (f"{base_url}/ideas/{idea_id}" if base_url else "")
+
+    # Common fields shown on your form (adjust keys if yours are custom_fields only)
+    cf = idea.get("custom_fields", {}) or {}
+    current = _strip_html(idea.get("current_behavior") or cf.get("current_behavior"))
+    impact  = _strip_html(idea.get("impact")            or cf.get("impact"))
+    request = _strip_html(idea.get("requested_behavior")or cf.get("requested_behavior"))
+    desc    = _strip_html(idea.get("description"))
+
+    # Customer (uses your existing custom field if present)
+    customer = (idea.get("customer_name") or
+                cf.get("customer_name")    or
+                cf.get("organization")     or
+                cf.get("organization_name") or "")
+
+    def section(label: str, text: str):
+        if not text:
+            return None
+        return {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*{label}*\n{_shorten(text)}"}
+        }
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": f"{idea_name} ({idea_id})", "emoji": True}},
+        {"type": "section", "fields": [
+            {"type": "mrkdwn", "text": f"*Idea:*\n<{idea_url}|Open in Aha!>" if idea_url else f"*Idea ID:*\n{idea_id}"},
+            {"type": "mrkdwn", "text": f"*Customer:*\n{customer or '—'}"},
+        ]},
+        {"type": "divider"},
+    ]
+
+    for lbl, val in [
+        ("Current behavior", current),
+        ("Impact",           impact),
+        ("Requested behavior", request),
+        ("Full description",  desc),
+    ]:
+        sec = section(lbl, val)
+        if sec:
+            blocks.append(sec)
+
+    blocks += [
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Draft critique (for your review)*\n```{_shorten(critique)}```"}}
+    ]
+    return blocks
+
+
 try:
     import openai
     OPENAI_READY = True
