@@ -30,19 +30,26 @@ def build_slack_blocks(idea: dict, critique: str) -> list:
     idea_name = idea.get("name") or "Unnamed idea"
     base_url = os.environ.get("AHA_BASE_URL", "").rstrip("/")
     
-    # Try to get the URL from Aha first, then construct it
+    # Try to get the URL from Aha first (most reliable)
     idea_url = idea.get("url")
+    
+    # If no URL provided, construct it
     if not idea_url and base_url:
-        # Try reference_num first (e.g., "MEND-I-123"), then fall back to id
+        # Try reference_num first (e.g., "MEND-I-123")
         ref = idea.get("reference_num") or idea.get("reference")
         if ref:
+            # Aha! URL format: https://mend-io.aha.io/ideas/ideas/MEND-I-123
             idea_url = f"{base_url}/ideas/ideas/{ref}"
         else:
+            # Fallback to numeric ID if available
             idea_id = idea.get("id")
             if idea_id:
                 idea_url = f"{base_url}/ideas/{idea_id}"
     
-    print(f"[DEBUG] Constructed URL: {idea_url}")
+    print(f"[DEBUG] Base URL: {base_url}")
+    print(f"[DEBUG] Reference num: {idea.get('reference_num')}")
+    print(f"[DEBUG] URL from Aha: {idea.get('url')}")
+    print(f"[DEBUG] Final constructed URL: {idea_url}")
 
     # Common fields shown on your form
     cf = idea.get("custom_fields", {}) or {}
@@ -287,16 +294,23 @@ def aha_webhook():
     idea = data.get("idea") or data
     
     # Debug logging for idea fields
+    print(f"[DEBUG] Full webhook data: {json.dumps(data, indent=2, default=str)[:1000]}")
     print(f"[DEBUG] Idea keys: {idea.keys() if isinstance(idea, dict) else 'not a dict'}")
     print(f"[DEBUG] Idea ID: {idea.get('id')}")
     print(f"[DEBUG] Reference num: {idea.get('reference_num')}")
     print(f"[DEBUG] Reference: {idea.get('reference')}")
     print(f"[DEBUG] URL from Aha: {idea.get('url')}")
     
-    idea_id = str(idea.get("id") or idea.get("reference_num") or idea.get("reference"))
-
-    if not idea_id:
+    # Try to get the idea identifier - prioritize reference_num for URL construction
+    idea_ref = idea.get("reference_num") or idea.get("reference")
+    idea_id = idea.get("id")
+    
+    if not (idea_ref or idea_id):
+        print("[ERROR] No idea identifier found in webhook data")
         return ("no idea id", 400)
+    
+    # Use reference for Aha comment API (works with both reference and ID)
+    comment_id = str(idea_ref or idea_id)
 
     # Analyze the idea quality using AI
     analysis = analyze_idea_quality(idea)
@@ -305,7 +319,7 @@ def aha_webhook():
     if not analysis or not analysis.get("needs_improvement"):
         return jsonify({
             "status": "ok",
-            "idea_id": idea_id,
+            "idea_ref": idea_ref or str(idea_id),
             "action": "no_action_needed",
             "message": "Idea is well-described"
         })
@@ -321,18 +335,18 @@ def aha_webhook():
         draft_body += f"\n\n**Issues identified:**\n" + "\n".join(f"• {issue}" for issue in issues)
 
     try:
-        aha_post_private_comment(idea_id, draft_body)
+        aha_post_private_comment(comment_id, draft_body)
         blocks = build_slack_blocks(idea, critique)
         slack_notify(
             text=f"⚠️ Idea needs review: {idea.get('name') or 'Unnamed idea'}",
             blocks=blocks,
         )
     except Exception as e:
-        slack_notify(text=f"⚠️ Failed to add draft private note for idea {idea_id}: {e}")
+        slack_notify(text=f"⚠️ Failed to add draft private note for idea {comment_id}: {e}")
 
     return jsonify({
         "status": "ok",
-        "idea_id": idea_id,
+        "idea_ref": idea_ref or str(idea_id),
         "action": "notified",
         "issues": issues
     })
